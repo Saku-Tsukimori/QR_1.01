@@ -2,59 +2,109 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>キャンバスマップQR解除</title>
+  <title>QR解除キャンバスマップ</title>
   <style>
     body {
       font-family: sans-serif;
-      text-align: center;
       margin: 0;
-      padding: 1em;
+      padding: 0;
     }
-    canvas {
-      border: 1px solid #ccc;
-      margin-top: 1em;
-    }
-    #qrPage {
-      margin-top: 2em;
-    }
-    .hidden {
+    #mapView, #qrView {
+      width: 100%;
+      height: 100vh;
       display: none;
+    }
+    #mapView {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      background: url('bg_map_tile.png') repeat;
+    }
+    #qrView {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      background: url('bg_camera_tile.png') repeat;
+    }
+    #mainCanvas {
+      margin-top: 10px;
+      border: 1px solid #ccc;
+    }
+    #zoomBox {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      width: 316.8px;
+      height: 394.2px;
+      overflow: hidden;
+      border: 2px solid #333;
+    }
+    #zoomCanvas {
+      transform: scale(3);
+      transform-origin: top left;
+    }
+    #zoomCursor {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 100;
+      pointer-events: none;
+    }
+    #qrButton {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      font-size: 1.2em;
+    }
+    #qrView video {
+      margin-top: 40px;
+      width: 90%;
+      max-width: 600px;
+    }
+    #qrOutput {
+      margin: 1em;
     }
   </style>
 </head>
 <body>
+  <div id="mapView">
+    <canvas id="mainCanvas" width="1056" height="1314"></canvas>
+    <div id="zoomBox">
+      <canvas id="zoomCanvas" width="1056" height="1314"></canvas>
+      <img id="zoomCursor" src="cursor.png" alt="カーソル">
+    </div>
+    <button id="qrButton" onclick="switchToQR()">📷 QRコードを読み取る</button>
+  </div>
 
-  <h2>🧩 QRコードでキャンバスマップを解除</h2>
-  <canvas id="mapCanvas" width="1056" height="1314"></canvas>
-  <br>
-  <button onclick="switchToQR()">📷 QRコードを読み取る</button>
-
-  <!-- QRコード読み取り画面 -->
-  <div id="qrPage" class="hidden">
-    <h3>📷 QRコードを読み取ってください</h3>
+  <div id="qrView">
+    <h2>📷 QRコードを読み取ってください</h2>
     <video id="video" autoplay muted playsinline></video>
     <div id="qrOutput">スキャン中...</div>
-    <br>
     <button onclick="stopQR()">⬅ 戻る</button>
   </div>
 
-  <!-- jsQRライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
   <script>
-    const canvas = document.getElementById("mapCanvas");
-    const ctx = canvas.getContext("2d");
+    const mainCanvas = document.getElementById("mainCanvas");
+    const mainCtx = mainCanvas.getContext("2d");
+    const zoomCanvas = document.getElementById("zoomCanvas");
+    const zoomCtx = zoomCanvas.getContext("2d");
+    const zoomBox = document.getElementById("zoomBox");
+
     const video = document.getElementById("video");
     const qrOutput = document.getElementById("qrOutput");
-    const qrPage = document.getElementById("qrPage");
+    const mapView = document.getElementById("mapView");
+    const qrView = document.getElementById("qrView");
 
-    const tileWidth = 352;
-    const tileHeight = 438;
+    const tileW = 352, tileH = 438;
+    const flags = Array(9).fill(false);
+    const grayImages = [], colorImages = [];
 
-    const flags = Array(9).fill(false);  // 解除状態
-    const grayImages = [];
-    const colorImages = [];
-
-    // QRコードと区画番号対応
     const flagMap = {
       "001": 0, "002": 1, "003": 2,
       "004": 3, "005": 4, "006": 5,
@@ -63,40 +113,35 @@
       "011": "reset"
     };
 
-    // 全画像を読み込む
     let loaded = 0;
     for (let i = 0; i < 9; i++) {
       grayImages[i] = new Image();
       grayImages[i].src = `gray_${i}.png`;
       grayImages[i].onload = checkReady;
-
       colorImages[i] = new Image();
       colorImages[i].src = `color_${i}.png`;
       colorImages[i].onload = checkReady;
     }
 
     function checkReady() {
-      loaded++;
-      if (loaded === 18) redrawMap();
+      if (++loaded === 18) redrawAll();
     }
 
-    // 再描画処理
-    function redrawMap() {
+    function redrawAll() {
       for (let i = 0; i < 9; i++) {
         const row = Math.floor(i / 3);
         const col = i % 3;
-        const x = col * tileWidth;
-        const y = row * tileHeight;
+        const x = col * tileW;
+        const y = row * tileH;
         const img = flags[i] ? colorImages[i] : grayImages[i];
-        ctx.drawImage(img, x, y, tileWidth, tileHeight);
+        mainCtx.drawImage(img, x, y);
+        zoomCtx.drawImage(img, x, y);
       }
     }
 
-    // QR読み取り開始
-    let qrStream = null;
-
     function switchToQR() {
-      qrPage.classList.remove("hidden");
+      mapView.style.display = "none";
+      qrView.style.display = "flex";
       startQR();
     }
 
@@ -105,16 +150,43 @@
         qrStream.getTracks().forEach(track => track.stop());
         qrStream = null;
       }
-      qrPage.classList.add("hidden");
+      qrView.style.display = "none";
+      mapView.style.display = "flex";
     }
 
+    function handleQR(data) {
+      const flag = flagMap[data];
+      if (flag === "cheat") {
+        for (let i = 0; i < 9; i++) flags[i] = true;
+        redrawAll();
+        qrOutput.textContent += "（全解除）";
+      } else if (flag === "reset") {
+        for (let i = 0; i < 9; i++) flags[i] = false;
+        redrawAll();
+        qrOutput.textContent = "チェックポイントをリセットしました";
+      } else if (typeof flag === "number") {
+        if (!flags[flag]) {
+          flags[flag] = true;
+          redrawAll();
+          qrOutput.textContent += `（${flag + 1}番マス解除）`;
+        } else {
+          qrOutput.textContent += "（すでに解除済み）";
+        }
+      } else {
+        qrOutput.textContent += "（無効なコード）";
+      }
+      setTimeout(stopQR, 1500);
+    }
+
+    let qrStream = null;
     function startQR() {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
         .then(stream => {
           qrStream = stream;
           video.srcObject = stream;
           requestAnimationFrame(scanFrame);
-        }).catch(err => {
+        })
+        .catch(err => {
           qrOutput.textContent = "カメラ起動エラー: " + err;
         });
     }
@@ -124,51 +196,24 @@
         requestAnimationFrame(scanFrame);
         return;
       }
-
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = video.videoWidth;
-      tempCanvas.height = video.videoHeight;
-      const ctx2 = tempCanvas.getContext("2d");
+      const temp = document.createElement("canvas");
+      temp.width = video.videoWidth;
+      temp.height = video.videoHeight;
+      const ctx2 = temp.getContext("2d");
       ctx2.drawImage(video, 0, 0);
-      const imageData = ctx2.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-      if (code) {
-        handleQR(code.data.trim());
-      } else {
-        qrOutput.textContent = "スキャン中...";
-        requestAnimationFrame(scanFrame);
-      }
+      const imgData = ctx2.getImageData(0, 0, temp.width, temp.height);
+      const code = jsQR(imgData.data, imgData.width, imgData.height);
+      if (code) handleQR(code.data.trim());
+      else requestAnimationFrame(scanFrame);
     }
 
-    function handleQR(data) {
-      qrOutput.textContent = "読み取ったコード: " + data;
-      const flag = flagMap[data];
+    // 位置カーソルの中央追従（仮に中央固定）
+    // 実際の位置取得と拡大canvasのスクロールは応用で対応可能
 
-      if (flag === "cheat") {
-        for (let i = 0; i < 9; i++) flags[i] = true;
-        qrOutput.textContent += "（全解除）";
-        redrawMap();
-
-      } else if (flag === "reset") {
-        for (let i = 0; i < 9; i++) flags[i] = false;
-        qrOutput.textContent = "チェックポイントをリセットしました";
-        redrawMap();
-
-      } else if (typeof flag === "number") {
-        if (!flags[flag]) {
-          flags[flag] = true;
-          qrOutput.textContent += `（${flag + 1}番マス解除）`;
-          redrawMap();
-        } else {
-          qrOutput.textContent += "（すでに解除済み）";
-        }
-      } else {
-        qrOutput.textContent += "（無効なコード）";
-      }
-
-      setTimeout(stopQR, 1500);
-    }
+    // 初期表示
+    window.onload = () => {
+      mapView.style.display = "flex";
+    };
   </script>
 </body>
 </html>
