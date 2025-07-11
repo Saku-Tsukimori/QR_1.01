@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>キャンバスマップQR解除</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 1em;
+    }
+    canvas {
+      border: 1px solid #ccc;
+      margin-top: 1em;
+    }
+    #qrPage {
+      margin-top: 2em;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>🧩 QRコードでキャンバスマップを解除</h2>
+  <canvas id="mapCanvas" width="1056" height="1314"></canvas>
+  <br>
+  <button onclick="switchToQR()">📷 QRコードを読み取る</button>
+
+  <!-- QRコード読み取り画面 -->
+  <div id="qrPage" class="hidden">
+    <h3>📷 QRコードを読み取ってください</h3>
+    <video id="video" autoplay muted playsinline></video>
+    <div id="qrOutput">スキャン中...</div>
+    <br>
+    <button onclick="stopQR()">⬅ 戻る</button>
+  </div>
+
+  <!-- jsQRライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+  <script>
+    const canvas = document.getElementById("mapCanvas");
+    const ctx = canvas.getContext("2d");
+    const video = document.getElementById("video");
+    const qrOutput = document.getElementById("qrOutput");
+    const qrPage = document.getElementById("qrPage");
+
+    const tileWidth = 352;
+    const tileHeight = 438;
+
+    const flags = Array(9).fill(false);  // 解除状態
+    const grayImages = [];
+    const colorImages = [];
+
+    // QRコードと区画番号対応
+    const flagMap = {
+      "001": 0, "002": 1, "003": 2,
+      "004": 3, "005": 4, "006": 5,
+      "007": 6, "008": 7, "009": 8,
+      "010": "cheat",
+      "011": "reset"
+    };
+
+    // 全画像を読み込む
+    let loaded = 0;
+    for (let i = 0; i < 9; i++) {
+      grayImages[i] = new Image();
+      grayImages[i].src = `gray_${i}.png`;
+      grayImages[i].onload = checkReady;
+
+      colorImages[i] = new Image();
+      colorImages[i].src = `color_${i}.png`;
+      colorImages[i].onload = checkReady;
+    }
+
+    function checkReady() {
+      loaded++;
+      if (loaded === 18) redrawMap();
+    }
+
+    // 再描画処理
+    function redrawMap() {
+      for (let i = 0; i < 9; i++) {
+        const row = Math.floor(i / 3);
+        const col = i % 3;
+        const x = col * tileWidth;
+        const y = row * tileHeight;
+        const img = flags[i] ? colorImages[i] : grayImages[i];
+        ctx.drawImage(img, x, y, tileWidth, tileHeight);
+      }
+    }
+
+    // QR読み取り開始
+    let qrStream = null;
+
+    function switchToQR() {
+      qrPage.classList.remove("hidden");
+      startQR();
+    }
+
+    function stopQR() {
+      if (qrStream) {
+        qrStream.getTracks().forEach(track => track.stop());
+        qrStream = null;
+      }
+      qrPage.classList.add("hidden");
+    }
+
+    function startQR() {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(stream => {
+          qrStream = stream;
+          video.srcObject = stream;
+          requestAnimationFrame(scanFrame);
+        }).catch(err => {
+          qrOutput.textContent = "カメラ起動エラー: " + err;
+        });
+    }
+
+    function scanFrame() {
+      if (!video.videoWidth) {
+        requestAnimationFrame(scanFrame);
+        return;
+      }
+
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = video.videoWidth;
+      tempCanvas.height = video.videoHeight;
+      const ctx2 = tempCanvas.getContext("2d");
+      ctx2.drawImage(video, 0, 0);
+      const imageData = ctx2.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+      if (code) {
+        handleQR(code.data.trim());
+      } else {
+        qrOutput.textContent = "スキャン中...";
+        requestAnimationFrame(scanFrame);
+      }
+    }
+
+    function handleQR(data) {
+      qrOutput.textContent = "読み取ったコード: " + data;
+      const flag = flagMap[data];
+
+      if (flag === "cheat") {
+        for (let i = 0; i < 9; i++) flags[i] = true;
+        qrOutput.textContent += "（全解除）";
+        redrawMap();
+
+      } else if (flag === "reset") {
+        for (let i = 0; i < 9; i++) flags[i] = false;
+        qrOutput.textContent = "チェックポイントをリセットしました";
+        redrawMap();
+
+      } else if (typeof flag === "number") {
+        if (!flags[flag]) {
+          flags[flag] = true;
+          qrOutput.textContent += `（${flag + 1}番マス解除）`;
+          redrawMap();
+        } else {
+          qrOutput.textContent += "（すでに解除済み）";
+        }
+      } else {
+        qrOutput.textContent += "（無効なコード）";
+      }
+
+      setTimeout(stopQR, 1500);
+    }
+  </script>
+</body>
+</html>
